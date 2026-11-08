@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply fixes and features (location fix, metres, arrow, Maps link)
+      - name: Apply fixes and features (location fix, metres, arrow, Maps link, login reset)
         run: |
           python3 - <<'PY'
           import sys
@@ -220,6 +220,50 @@ jobs:
               print("3) patched DetailLocationView.swift (arrow, distance, Google Maps link)")
           else:
               print("3) DetailLocationView.swift already patched")
+
+          # ---------------------------------------------------------------- 4) clear stale login on fresh install
+          p = "Spot/SpotApp.swift"
+          s = load(p)
+          if "spotWipeKeychainOnFreshInstall" not in s:
+              s = must_replace(s, "import SwiftUI\n", "import SwiftUI\nimport Security\n", "import")
+              s = must_replace(s,
+                  "    init() {\n        LUIInit(configuration: configuration)\n    }",
+                  "    init() {\n        spotWipeKeychainOnFreshInstall()\n        LUIInit(configuration: configuration)\n    }",
+                  "SpotApp init")
+              s += """
+          /// iOS keeps Keychain items after an app is deleted, so a reinstall would come back
+          /// "already signed in" with an old, expired Google login. On the first launch after
+          /// a fresh install (UserDefaults are wiped on delete), clear Spot's saved login.
+          func spotWipeKeychainOnFreshInstall() {
+              let marker = "spotFreshInstallKeychainWiped"
+              let defaults = UserDefaults.standard
+              if defaults.bool(forKey: marker) { return }
+              let query: [String: Any] = [
+                  kSecClass as String: kSecClassGenericPassword,
+                  kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+              ]
+              SecItemDelete(query as CFDictionary)
+              defaults.set(true, forKey: marker)
+          }
+          """
+              save(p, s)
+              print("4) patched SpotApp.swift (fresh-install login reset)")
+          else:
+              print("4) SpotApp.swift already patched")
+
+          # ---------------------------------------------------------------- 5) always show Account / Logout when signed in
+          p = "Spot/ContentView.swift"
+          s = load(p)
+          old = "if let _ = PushReceiver.sharedInstance.getToken(), let username = tokenManager.username {"
+          if old in s:
+              s = s.replace(old, "if let username = tokenManager.username {", 1)
+              save(p, s)
+              print("5) patched ContentView.swift (Logout always visible)")
+          elif "if let username = tokenManager.username {" in s:
+              print("5) ContentView.swift already patched")
+          else:
+              print("PATTERN NOT FOUND (ContentView logout condition)")
+              sys.exit(1)
 
           print("All patches applied.")
           PY
